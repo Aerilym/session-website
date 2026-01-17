@@ -2,7 +2,7 @@ import { readdirSync } from 'node:fs';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import config from 'next.config';
 import { METADATA } from '@/constants';
-import { fetchBlogEntries, fetchPages } from '@/services/cms';
+import { fetchPages } from '@/services/cms';
 import type { IRedirection } from '@/services/redirect';
 import type { IPost } from '@/types/cms';
 
@@ -66,6 +66,9 @@ function getOverridePageOptions(slug: string) {
 }
 
 export default async function handler(_req: NextApiRequest, res: NextApiResponse) {
+  // Cache the sitemap for 1 hour to reduce API calls
+  res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=7200');
+  
   const baseUrl = {
     development: 'http://localhost:3000',
     test: 'http://localhost:3000',
@@ -153,22 +156,8 @@ export default async function handler(_req: NextApiRequest, res: NextApiResponse
     generateLocalizedUrls(page.slug, new Date().toISOString())
   );
 
-  const _blogPages: IPost[] = [];
-  let currentPage = 1;
-  let foundAllPosts = false;
-
-  // Contentful only allows 100 at a time
-  while (!foundAllPosts) {
-    const { entries: _posts } = await fetchBlogEntries(100, currentPage);
-
-    if (_posts.length === 0) {
-      foundAllPosts = true;
-      continue;
-    }
-
-    _blogPages.push(..._posts);
-    currentPage++;
-  }
+  const { fetchAllBlogEntries } = await import('@/services/cms');
+  const _blogPages = await fetchAllBlogEntries();
 
   const blogPages: LocalizedUrl[] = _blogPages.map((page) => ({
     url: `${baseUrl}/blog/${page.slug}`,

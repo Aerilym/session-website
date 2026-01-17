@@ -2,8 +2,8 @@ import type { GetStaticPaths, GetStaticPropsContext } from 'next';
 import type { ReactElement } from 'react';
 import BlogPost from '@/components/BlogPost';
 import RichPage from '@/components/RichPage';
-import { CMS } from '@/constants';
-import { fetchBlogEntries, fetchEntryBySlug, fetchPages, generateLinkMeta } from '@/services/cms';
+import { CMS, getRevalidationTime } from '@/constants';
+import { fetchBlogEntries, fetchEntryBySlug, generateLinkMeta } from '@/services/cms';
 import { hasRedirection } from '@/services/redirect';
 import { type IPage, type IPost, isPost } from '@/types/cms';
 
@@ -60,36 +60,50 @@ export async function getStaticProps(context: GetStaticPropsContext) {
         .slice(0, 6);
     }
 
+    // Calculate revalidation time based on content age
+    const revalidate = isPost(content)
+      ? getRevalidationTime(content.publishedDateISO)
+      : CMS.CONTENT_REVALIDATE_RATE;
+
+    // Log revalidation time in dev builds
+    if (process.env.NODE_ENV === 'development') {
+      const contentType = isPost(content) ? 'Post' : 'Page';
+      const ageInfo = isPost(content) 
+        ? ` (published: ${content.publishedDate})` 
+        : '';
+      console.log(
+        `[Revalidate] ${contentType} "/${slug}"${ageInfo} - ${revalidate}s (${Math.round(revalidate / 60)}min)`
+      );
+    }
+
     return {
       props,
-      revalidate: CMS.CONTENT_REVALIDATE_RATE,
+      revalidate,
     };
   } catch (err) {
-    console.error(err);
+    // Log 404s in dev builds to help identify problematic access patterns
+    if (process.env.NODE_ENV === 'development') {
+      console.warn(`[404] Page not found: "/${slug}"`);
+    }
+    
+    // For non-dev, only log actual errors (not 404s from regular navigation)
+    if (err instanceof Error && !err.message.includes('Failed to fetch entry')) {
+      console.error(err);
+    }
+    
     return {
       props: { messages },
       notFound: true,
-      revalidate: CMS.CONTENT_REVALIDATE_RATE,
+      // Use longer revalidation for 404 pages to reduce unnecessary rebuilds
+      revalidate: CMS.CONTENT_REVALIDATE_RATE_OLD,
     };
   }
 }
 
 export const getStaticPaths: GetStaticPaths = async ({ locales }) => {
+  const { fetchPages, fetchAllBlogEntries } = await import('@/services/cms');
   const { entries: pages } = await fetchPages();
-  const posts: IPost[] = [];
-  let currentPage = 1;
-  let foundAllPosts = false;
-
-  // Contentful only allows 100 at a time
-  while (!foundAllPosts) {
-    const { entries: _posts } = await fetchBlogEntries(100, currentPage);
-    if (_posts.length === 0) {
-      foundAllPosts = true;
-      continue;
-    }
-    posts.push(..._posts);
-    currentPage++;
-  }
+  const posts = await fetchAllBlogEntries();
 
   // Generate paths for pages (all locales) and posts (en only)
   const pagePaths = pages.flatMap((page) =>

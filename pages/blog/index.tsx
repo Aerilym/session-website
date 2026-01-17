@@ -7,7 +7,7 @@ import PostList from '@/components/posts/PostList';
 import Layout from '@/components/ui/Layout';
 import { CMS } from '@/constants';
 import METADATA from '@/constants/metadata';
-import { fetchBlogEntries, generateRoute } from '@/services/cms';
+import { generateRoute } from '@/services/cms';
 import type { IPost } from '@/types/cms';
 
 interface Props {
@@ -15,26 +15,21 @@ interface Props {
 }
 
 export const getStaticProps: GetStaticProps = async (_context: GetStaticPropsContext) => {
-  const posts: IPost[] = [];
-  let currentPage = 1;
-  let foundAllPosts = false;
+  const { fetchAllBlogEntries } = await import('@/services/cms');
+  const posts = await fetchAllBlogEntries();
 
-  // Contentful only allows 100 at a time
-  while (!foundAllPosts) {
-    const { entries: _posts } = await fetchBlogEntries(100, currentPage);
+  const revalidate = CMS.CONTENT_REVALIDATE_RATE;
 
-    if (_posts.length === 0) {
-      foundAllPosts = true;
-      continue;
-    }
-
-    posts.push(..._posts);
-    currentPage++;
+  // Log revalidation time in dev builds
+  if (process.env.NODE_ENV === 'development') {
+    console.log(
+      `[Revalidate] Blog Index - ${revalidate}s (${Math.round(revalidate / 60)}min)`
+    );
   }
 
   return {
     props: { posts, messages: (await import(`../../locales/${_context.locale}.json`)).default },
-    revalidate: CMS.CONTENT_REVALIDATE_RATE,
+    revalidate,
   };
 };
 
